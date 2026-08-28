@@ -1,0 +1,241 @@
+name: Terraform Infrastructure Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform-deploy.yml"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Acción a ejecutar"
+        required: true
+        default: "apply"
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+
+permissions:
+  id-token: write
+  contents: read
+  actions: write
+
+env:
+  TF_DIR: ./infra
+  TF_VERSION: "1.9.0"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  terraform:
+    name: Terraform Deploy
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar credenciales AWS via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      # ── Un solo init para todo el job ────────────────────────────────────
+      - name: Terraform Init
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform init
+
+      - name: Terraform Validate
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform validate
+
+      # ── Plan ─────────────────────────────────────────────────────────────
+      - name: Terraform Plan
+        id: plan
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          terraform plan \
+            -detailed-exitcode \
+            -input=false
+          echo "exitcode=$?" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Check plan exit code
+        run: |
+          if [ "${{ steps.plan.outputs.exitcode }}" == "1" ]; then
+            echo "Terraform plan failed"
+            exit 1
+          fi
+
+      # ── Apply (solo si hay cambios y la acción es apply) ──────────────────
+      - name: Terraform Apply
+        if: |
+
+          (github.event.inputs.action == 'apply' || github.event.inputs.action == '' || github.event_name == 'push')
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform apply --auto-approve
+
+      - name: Export Terraform Outputs
+        id: tf-outputs
+        run: |
+          echo "🔍 Exportando outputs definidos en Terraform..."
+          TF_JSON=$(terraform output -json)
+
+          # Iterar sobre todas las claves definidas en outputs.tf y exportarlas
+          echo "$TF_JSON" | jq -r 'keys[]' | while read -r key; do
+            val=$(echo "$TF_JSON" | jq -r --arg k "$key" '.[$k].value // empty')
+            if [ -z "$val" ] || [ "$val" = "null" ]; then
+              echo "⚠️  Output '$key' vacío, se omite"
+              continue
+            fi
+
+            # Escribir como salida de step (soporta valores multilínea)
+            echo "$key<<EOF" >> "$GITHUB_OUTPUT"
+            echo "$val" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            echo "✔️  Exportado: $key"
+          done
+
+      - name: Update Repository Secrets
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_VARS }}
+          REPO: ${{ github.repository }}
+        run: |
+          echo "🔐 Actualizando secretos a nivel de repositorio: $REPO"
+          TF_JSON=$(terraform output -json)
+
+          # Para cada output definido en outputs.tf se crea/actualiza un secreto en el repo
+          echo "$TF_JSON" | jq -r 'keys[]' | while read -r key; do
+            val=$(echo "$TF_JSON" | jq -r --arg k "$key" '.[$k].value // empty')
+            if [ -z "$val" ] || [ "$val" = "null" ]; then
+              echo "⚠️  Output '$key' vacío, se omite"
+              continue
+            fi
+
+            # Normalizar nombre de secreto: <UPPERCASE_OUTPUT_NAME> (sin prefijo TF_)
+            secret_name="$(echo "$key" | tr '[:lower:]' '[:upper:]' | sed 's/[^A-Z0-9_]/_/g')"
+            echo "🔸 Estableciendo secreto: $secret_name"
+
+            # Usamos gh CLI para crear/actualizar el secreto en el repositorio actual
+            gh secret set "$secret_name" --body "$val" --repo "$REPO"
+          done
+
+      # ── Capturar outputs y guardar como vars en GitHub ────────────────────
+      - name: Capturar Terraform Outputs y guardar en GitHub
+        id: tf-github-vars
+        if: |
+
+          (github.event.inputs.action == 'apply' || github.event.inputs.action == '' || github.event_name == 'push')
+        working-directory: ${{ env.TF_DIR }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_VARS }}
+          REPO: ${{ github.repository }}
+        run: |
+          echo "📤 Leyendo outputs de Terraform..."
+          TF_OUT=$(terraform output -json)
+
+          # Los outputs tienen prefijos de texto tipo "URL de ECR: https://..."
+          # El sed extrae solo el valor después del primer ": "
+          get_output() {
+            echo "$TF_OUT" \
+              | jq -r --arg key "$1" '.[$key].value // empty' \
+              | sed 's/^[^:]*: //'
+          }
+
+          # ── Mapeo outputs.tf → variables de GitHub ────────────────────────
+          # output tf                        → var GitHub (usada en build-deploy.yaml)
+          BACKEND_ECR=$(get_output 'ecr_backend_repository_url')   # → BACKEND_ECR_REGISTRY
+          FRONTEND_ECR=$(get_output 'ecr_frontend_repository_url') # → FRONTEND_ECR_REGISTRY
+          S3=$(get_output 's3_bucket_name')                        # → S3_BUCKET
+          CD_APP=$(get_output 'codedeploy_app_name')               # → CODEDEPLOY_APP
+          CD_GROUP=$(get_output 'codedeploy_deployment_group_name') # → CODEDEPLOY_GROUP
+          REGION=$(get_output 'aws_region')                        # → AWS_REGION
+
+          # ── Función para crear o actualizar una variable en GitHub ─────────
+          upsert_var() {
+            local VAR_NAME="$1"
+            local VAR_VALUE="$2"
+
+            if [ -z "$VAR_VALUE" ]; then
+              echo "⚠️  $VAR_NAME está vacío, se omite"
+              return
+            fi
+
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO}/actions/variables/${VAR_NAME}")
+
+            if [ "$STATUS" = "200" ]; then
+              curl -s -X PATCH \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${REPO}/actions/variables/${VAR_NAME}" \
+                -d "{\"name\":\"${VAR_NAME}\",\"value\":\"${VAR_VALUE}\"}"
+              echo "🔄 Actualizada: $VAR_NAME"
+            else
+              curl -s -X POST \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${REPO}/actions/variables" \
+                -d "{\"name\":\"${VAR_NAME}\",\"value\":\"${VAR_VALUE}\"}"
+              echo "✅ Creada: $VAR_NAME"
+            fi
+          }
+
+          upsert_var "AWS_REGION"             "$REGION"
+          upsert_var "BACKEND_ECR_REGISTRY"   "$BACKEND_ECR"
+          upsert_var "FRONTEND_ECR_REGISTRY"  "$FRONTEND_ECR"
+          upsert_var "S3_BUCKET"              "$S3"
+          upsert_var "CODEDEPLOY_APP"         "$CD_APP"
+          upsert_var "CODEDEPLOY_GROUP"       "$CD_GROUP"
+
+          echo "🎉 Variables listas para usarse con vars.* en build-deploy.yaml"
+
+      # ── Esperar 5 minutos y destruir ──────────────────────────────────────
+      - name: Esperar 5 minutos antes de destruir
+        if: |
+
+          (github.event.inputs.action == 'apply' || github.event.inputs.action == '' || github.event_name == 'push')
+        run: |
+          echo "⏳ Esperando 5 minutos antes de destruir la infraestructura..."
+          sleep 300
+          echo "✅ Listo, procediendo con el destroy"
+
+      - name: Terraform Destroy
+        if: |
+
+          (github.event.inputs.action == 'apply' || github.event.inputs.action == '' || github.event_name == 'push')
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform destroy -auto-approve -input=false
+
+      # ── Resumen final ─────────────────────────────────────────────────────
+      - name: Resumen del job
+        if: always()
+        run: |
+          echo "## 🏗️ Terraform Deploy — Resumen" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Acción:** \`${{ github.event.inputs.action || 'apply' }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Estado:** \`${{ job.status }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Variable guardada | Output en outputs.tf |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| \`AWS_ROLE_ARN\` | \`aws_role_arn\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`AWS_REGION\` | \`aws_region\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`BACKEND_ECR_REGISTRY\` | \`ecr_repository_url\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`FRONTEND_ECR_REGISTRY\` | \`ecr_repository_url\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`S3_BUCKET\` | \`s3_bucket_name\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`CODEDEPLOY_APP\` | \`codedeploy_app_name\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`CODEDEPLOY_GROUP\` | \`codedeploy_deployment_group_name\` |" >> $GITHUB_STEP_SUMMARY
