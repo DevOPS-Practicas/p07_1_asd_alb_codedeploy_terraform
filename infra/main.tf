@@ -439,6 +439,7 @@ resource "aws_autoscaling_group" "app_asg" {
 resource "aws_ecr_repository" "backend" {
   name                 = "${var.project_name}/backend"
   image_tag_mutability = "MUTABLE"
+  force_delete         = true
 
   image_scanning_configuration {
     scan_on_push = true
@@ -454,6 +455,7 @@ resource "aws_ecr_repository" "backend" {
 resource "aws_ecr_repository" "frontend" {
   name                 = "${var.project_name}/frontend"
   image_tag_mutability = "MUTABLE"
+  force_delete         = true
 
   image_scanning_configuration {
     scan_on_push = true
@@ -475,7 +477,8 @@ resource "random_id" "bucket_suffix" {
 }
 
 resource "aws_s3_bucket" "codedeploy_bucket" {
-  bucket = "${var.project_name}-codedeploy-bucket-${random_id.bucket_suffix.hex}"
+  bucket        = "${var.project_name}-codedeploy-bucket-${random_id.bucket_suffix.hex}"
+  force_destroy = true
 
   tags = {
     Name        = "${var.project_name}-codedeploy-bucket"

@@ -110,4 +110,5 @@ if [ "$DEPLOY_SUCCESS" = true ]; then
 else
   echo "⚠️ El despliegue falló o sigue en progreso. Consulta los logs con:"
   echo "   aws deploy get-deployment --deployment-id $DEPLOYMENT_ID"
+  exit 1
 fi
