@@ -36,7 +36,7 @@ permissions:
 
 env:
   TF_DIR: ./infra/main
-  TF_VERSION: "1.9.0"
+  TF_VERSION: "1.10.3"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
 
