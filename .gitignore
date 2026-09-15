@@ -86,6 +86,8 @@ htmlcov/
 *.tfstate
 *.tfstate.*
 *.tfstate.backup
+**/terraform.tfstate.d/
+*.terraform.tfstate.lock.info
 
 # Terraform directories (plugins, modules, etc.)
 .terraform/
@@ -100,6 +102,7 @@ htmlcov/
 *.tfvars
 *.tfvars.json
 *.tfplan
+**/tfplan
 crash.log
 override.tf
 override.tf.json

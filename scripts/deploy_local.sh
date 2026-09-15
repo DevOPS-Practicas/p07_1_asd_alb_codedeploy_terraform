@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-INFRA_DIR="${ROOT_DIR}/infra"
+INFRA_DIR="${ROOT_DIR}/infra/main"
 
 echo "========================================================"
 echo "🚀 Despliegue Local de la Aplicación (AWS + CodeDeploy)"
@@ -34,7 +34,7 @@ ALB_DNS=$(echo "$TF_JSON" | jq -r '.alb_dns_name.value // empty')
 EC2_IPS=$(echo "$TF_JSON" | jq -r '.ec2_public_ips.value[]? // empty')
 
 if [ -z "$BACKEND_ECR_REPO" ] || [ -z "$FRONTEND_ECR_REPO" ] || [ -z "$S3_BUCKET" ] || [ -z "$CODEDEPLOY_APP" ]; then
-  echo "❌ Error: No se pudieron obtener los outputs de Terraform. ¿Ya ejecutaste 'terraform apply' en el directorio infra/?"
+  echo "❌ Error: No se pudieron obtener los outputs de Terraform. ¿Ya ejecutaste 'terraform apply' en el directorio infra/main/?"
   exit 1
 fi
 

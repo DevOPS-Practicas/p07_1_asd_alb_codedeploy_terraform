@@ -22,7 +22,7 @@ NC='\033[0m' # No Color
 # Directorios de referencia
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-INFRA_DIR="${ROOT_DIR}/infra"
+INFRA_DIR="${ROOT_DIR}/infra/main"
 
 # Valores por defecto
 ALB_URL=""
@@ -61,7 +61,7 @@ usage() {
   echo "  -h, --help                 Mostrar esta ayuda"
   echo ""
   echo -e "${BOLD}Ejemplos:${NC}"
-  echo "  $0                                            # Autodetecta ALB desde infra/terraform"
+  echo "  $0                                            # Autodetecta ALB desde infra/main/terraform"
   echo "  $0 -u http://mi-alb.amazonaws.com -n 500 -c 25"
   echo "  $0 -u http://mi-alb.amazonaws.com -o scripts/report_test_alb.md"
   exit 0
@@ -141,7 +141,7 @@ echo -e "${GREEN}✅ Herramientas requeridas disponibles (curl, python3, jq).${N
 # ==============================================================================
 
 if [ -z "$ALB_URL" ]; then
-  echo -e "\n${BLUE}🔎 No se especificó --url. Intentando obtener información desde Terraform en infra/...${NC}"
+  echo -e "\n${BLUE}🔎 No se especificó --url. Intentando obtener información desde Terraform en infra/main/...${NC}"
   if [ -d "$INFRA_DIR" ]; then
     cd "$INFRA_DIR"
     if TF_JSON=$(terraform output -json 2>/dev/null); then

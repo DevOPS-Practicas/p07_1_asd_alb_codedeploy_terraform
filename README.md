@@ -64,10 +64,12 @@ Combina **Infraestructura como Código (IaC)** con **Terraform**, contenerizaci�
 │   ├── Dockerfile                  # Multi-stage build (Node 18 builder + Nginx unprivileged runtime)
 │   └── package.json                # Dependencias y scripts de React
 ├── infra/                          # Infraestructura como Código (Terraform)
-│   ├── main.tf                     # Definición de VPC, ALB, ASG, ECR, S3, IAM, CodeDeploy
-│   ├── variables.tf                # Parámetros y variables de configuración
-│   ├── outputs.tf                  # Valores de salida (DNS del ALB, nombres de ECR, S3, etc.)
-│   └── user_data.sh                # Script de aprovisionamiento de EC2 (Docker, Compose, CodeDeploy Agent)
+│   ├── bootstrap/                  # Infraestructura inicial / remota (actualmente vacía)
+│   └── main/                       # Infraestructura principal (VPC, ALB, ASG, CodeDeploy, etc.)
+│       ├── main.tf                 # Definición de VPC, ALB, ASG, ECR, S3, IAM, CodeDeploy
+│       ├── variables.tf            # Parámetros y variables de configuración
+│       ├── outputs.tf              # Valores de salida (DNS del ALB, nombres de ECR, S3, etc.)
+│       └── user_data.sh            # Script de aprovisionamiento de EC2 (Docker, Compose, CodeDeploy Agent)
 ├── scripts/                        # Scripts de ciclo de vida para CodeDeploy y despliegue local
 │   ├── before_install.sh           # Hook CodeDeploy: Limpieza de /opt/mi-app
 │   ├── after_install.sh            # Hook CodeDeploy: Permisos de ejecución
@@ -115,7 +117,7 @@ flowchart TD
         D6 --> D7[EC2 ASG: Traffic Draining -> docker compose pull/up -> HealthCheck OK]
     end
 
-    subgraph InfraPipeline["Infraestructura (Manual o Push a infra/)"]
+    subgraph InfraPipeline["Infraestructura (Manual o Push a infra/main/)"]
         E[terraform-deploy.yml] --> F[Terraform Plan & Apply]
         F --> G[Actualizar Variables de GitHub automáticamente]
     end
@@ -227,7 +229,7 @@ npm start
 
 #### Pasos:
 ```bash
-cd infra
+cd infra/main
 
 # Inicializar proveedores y módulos
 terraform init
@@ -258,7 +260,7 @@ chmod +x scripts/deploy_local.sh
 ./scripts/deploy_local.sh
 ```
 
-El script leerá automáticamente los outputs de Terraform en `infra/`, autenticará Docker en ECR, construirá y subirá las imágenes, subirá el paquete a S3 y disparará el despliegue en CodeDeploy monitoreando su progreso.
+El script leerá automáticamente los outputs de Terraform en `infra/main/`, autenticará Docker en ECR, construirá y subirá las imágenes, subirá el paquete a S3 y disparará el despliegue en CodeDeploy monitoreando su progreso.
 
 ---
 
@@ -301,7 +303,7 @@ Si deseas realizar o estudiar cada paso de forma manual a través de la consola 
 Para evitar cargos innecesarios en tu cuenta de AWS una vez concluido el taller o las pruebas:
 
 ```bash
-cd infra
+cd infra/main
 terraform destroy -auto-approve
 ```
 

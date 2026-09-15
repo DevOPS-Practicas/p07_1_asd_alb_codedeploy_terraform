@@ -16,13 +16,13 @@ terraform {
     }
   }
 
-  # Configuración para Backend remoto (S3 + lockfile) para trabajo colaborativo
-  # backend "s3" {
-  #   bucket       = "tu-bucket-terraform-state"
-  #   key          = "prod/terraform.tfstate"
-  #   region       = "us-east-1"
-  #   use_lockfile = true
-  # }
+  #Configuración para Backend remoto (S3 + lockfile) para trabajo colaborativo
+  backend "s3" {
+    bucket       = "infraestructura-calculadora-terraform-state"
+    key          = "prod/terraform.tfstate"
+    region       = "us-east-1"
+    use_lockfile = true
+  }
 }
 
 provider "aws" {
