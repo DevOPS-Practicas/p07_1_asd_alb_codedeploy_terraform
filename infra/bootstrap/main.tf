@@ -385,7 +385,43 @@ data "aws_iam_policy_document" "main_infra_provisioning" {
       "iam:GetPolicyVersion",
       "iam:ListPolicyVersions"
     ]
-    resources = ["arn:aws:iam::aws:policy/*"]
+    resources = [
+      "arn:aws:iam::aws:policy/*",
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/${var.project_name}-*"
+    ]
+  }
+
+  # Políticas administradas creadas por infra/main y por este módulo
+  statement {
+    sid    = "IAMCustomerManagedPolicyLifecycle"
+    effect = "Allow"
+    actions = [
+      "iam:CreatePolicy",
+      "iam:DeletePolicy",
+      "iam:CreatePolicyVersion",
+      "iam:DeletePolicyVersion",
+      "iam:SetDefaultPolicyVersion",
+      "iam:TagPolicy",
+      "iam:UntagPolicy",
+      "iam:ListPolicyVersions",
+      "iam:ListEntitiesForPolicy"
+    ]
+    resources = [
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/${var.project_name}-*"
+    ]
+  }
+
+  # Asociaciones de políticas a los roles administrados por infra/main
+  statement {
+    sid    = "IAMRolePolicyAttachments"
+    effect = "Allow"
+    actions = [
+      "iam:AttachRolePolicy",
+      "iam:DetachRolePolicy"
+    ]
+    resources = [
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project_name}-*"
+    ]
   }
 
   # Algunos servicios crean su service-linked role durante el primer despliegue
