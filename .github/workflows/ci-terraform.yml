@@ -3,8 +3,6 @@ name: CI - Terraform Plan
 on:
   pull_request:
     branches: [main]
-    paths:
-      - "infra/main/**"
 
 permissions:
   id-token: write
