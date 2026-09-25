@@ -29,6 +29,20 @@ provider "aws" {
   region = var.aws_region
 }
 
+locals {
+  public_subnet_names   = ["gh-subnet-a", "gh-subnet-b"]
+  route_table_name      = "gh-route-table"
+  elb_security_group    = "gh-security-group-elb"
+  ec2_security_group    = "gh-security-group-ec2"
+  gateway_name          = "gh-gateway"
+  target_group_name     = "gh-tg"
+  load_balancer_name    = "gh-elb"
+  asg_name              = "gh-asg"
+  launch_template_name  = "gh-template"
+  codedeploy_app_name   = "mi-app"
+  deployment_group_name = "produccion"
+}
+
 # ==============================================================================
 # Data Sources
 # ==============================================================================
@@ -83,7 +97,7 @@ resource "aws_subnet" "public" {
   map_public_ip_on_launch = true
 
   tags = {
-    Name        = "${var.project_name}-public-subnet-${count.index + 1}"
+    Name        = local.public_subnet_names[count.index]
     Environment = var.environment
   }
 }
@@ -92,7 +106,7 @@ resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
 
   tags = {
-    Name        = "${var.project_name}-igw"
+    Name        = local.gateway_name
     Environment = var.environment
   }
 }
@@ -106,7 +120,7 @@ resource "aws_route_table" "public" {
   }
 
   tags = {
-    Name        = "${var.project_name}-public-rt"
+    Name        = local.route_table_name
     Environment = var.environment
   }
 }
@@ -123,7 +137,7 @@ resource "aws_route_table_association" "public" {
 
 # SG para el Application Load Balancer: expuesto a Internet en HTTP (80) y HTTPS (443)
 resource "aws_security_group" "alb_sg" {
-  name        = "${var.project_name}-alb-sg"
+  name        = local.elb_security_group
   description = "Security Group para el ALB - Permite trafico publico de entrada"
   vpc_id      = aws_vpc.main.id
 
@@ -152,7 +166,7 @@ resource "aws_security_group" "alb_sg" {
   }
 
   tags = {
-    Name        = "${var.project_name}-alb-sg"
+    Name        = local.elb_security_group
     Environment = var.environment
   }
 }
@@ -161,7 +175,7 @@ resource "aws_security_group" "alb_sg" {
 # IMPORTANTE: Nunca acepta trafico directo desde 0.0.0.0/0 en el puerto de la app.
 # Solo permite conexiones originadas desde el Security Group del ALB.
 resource "aws_security_group" "instance_sg" {
-  name        = "${var.project_name}-instance-sg"
+  name        = local.ec2_security_group
   description = "Security Group para las instancias del ASG (acceso restringido via ALB)"
   vpc_id      = aws_vpc.main.id
 
@@ -194,7 +208,7 @@ resource "aws_security_group" "instance_sg" {
   }
 
   tags = {
-    Name        = "${var.project_name}-instance-sg"
+    Name        = local.ec2_security_group
     Environment = var.environment
   }
 }
@@ -307,7 +321,7 @@ resource "aws_iam_instance_profile" "ec2_profile" {
 # ==============================================================================
 
 resource "aws_lb" "main" {
-  name               = "${var.project_name}-alb"
+  name               = local.load_balancer_name
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb_sg.id]
@@ -316,13 +330,13 @@ resource "aws_lb" "main" {
   enable_deletion_protection = false
 
   tags = {
-    Name        = "${var.project_name}-alb"
+    Name        = local.load_balancer_name
     Environment = var.environment
   }
 }
 
 resource "aws_lb_target_group" "app_tg" {
-  name        = "${var.project_name}-tg"
+  name        = local.target_group_name
   port        = var.app_port
   protocol    = "HTTP"
   vpc_id      = aws_vpc.main.id
@@ -344,7 +358,7 @@ resource "aws_lb_target_group" "app_tg" {
   }
 
   tags = {
-    Name        = "${var.project_name}-tg"
+    Name        = local.target_group_name
     Environment = var.environment
   }
 }
@@ -365,7 +379,7 @@ resource "aws_lb_listener" "http" {
 # ==============================================================================
 
 resource "aws_launch_template" "app" {
-  name_prefix   = "${var.project_name}-lt-"
+  name          = local.launch_template_name
   image_id      = data.aws_ami.amazon_linux_2023.id
   instance_type = var.instance_type
 
@@ -395,7 +409,7 @@ resource "aws_launch_template" "app" {
 }
 
 resource "aws_autoscaling_group" "app_asg" {
-  name_prefix         = "${var.project_name}-asg-"
+  name                = local.asg_name
   vpc_zone_identifier = aws_subnet.public[*].id
   target_group_arns   = [aws_lb_target_group.app_tg.arn]
 
@@ -508,7 +522,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "codedeploy" {
 # ==============================================================================
 
 resource "aws_codedeploy_app" "main" {
-  name             = "${var.project_name}-codedeploy-app"
+  name             = local.codedeploy_app_name
   compute_platform = "Server"
 }
 
@@ -542,7 +556,7 @@ resource "aws_iam_role_policy_attachment" "codedeploy_service" {
 # Grupo de despliegue apuntando al Auto Scaling Group y coordinado con el Target Group
 resource "aws_codedeploy_deployment_group" "main" {
   app_name               = aws_codedeploy_app.main.name
-  deployment_group_name  = "${var.project_name}-deployment-group"
+  deployment_group_name  = local.deployment_group_name
   service_role_arn       = aws_iam_role.codedeploy_service_role.arn
   deployment_config_name = "CodeDeployDefault.OneAtATime"
 
